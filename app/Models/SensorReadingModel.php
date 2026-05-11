@@ -11,5 +11,5 @@ class SensorReadingModel extends Model
     protected $useAutoIncrement = true;
     protected $returnType = 'array';
     protected $useTimestamps = true;
-    protected $allowedFields = ['device_id', 'current', 'voltage', 'temperature', 'power_watt', 'recorded_at'];
+    protected $allowedFields = ['device_id', 'current', 'voltage', 'temperature', 'power_watt', 'energy', 'kwh', 'power', 'recorded_at'];
 }

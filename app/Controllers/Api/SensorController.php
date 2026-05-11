@@ -37,7 +37,7 @@ class SensorController extends BaseApiController
             ->orderBy('recorded_at', 'DESC')
             ->first();
         if (!$reading) return $this->errorResponse('Reading not found', 404);
-        
+
         return $this->successResponse($reading);
     }
 
@@ -58,10 +58,10 @@ class SensorController extends BaseApiController
     public function getStats($deviceId)
     {
         $period = $this->request->getGet('period') ?: 'daily';
-        
+
         $readings = $this->sensorReadingModel->where('device_id', $deviceId)->findAll();
         if (!$readings) return $this->errorResponse('No readings found', 404);
-        
+
         $currents = array_column($readings, 'current');
         $voltages = array_column($readings, 'voltage');
         $temps = array_column($readings, 'temperature');
@@ -80,5 +80,50 @@ class SensorController extends BaseApiController
         ];
 
         return $this->successResponse($stats);
+    }
+
+    /**
+     * Insert a test reading (debug only).
+     * Accepts JSON body or inserts a default sample for device 'energy'.
+     */
+    public function insertTestReading()
+    {
+        $required = env('SYNC_SECRET');
+        if (!empty($required)) {
+            $provided = $this->request->getGet('secret') ?? $this->request->getHeaderLine('X-Sync-Secret');
+            if ($provided !== $required) {
+                return $this->errorResponse('forbidden', 403);
+            }
+        }
+
+        $input = $this->request->getJSON(true) ?: [];
+
+        $deviceId = $input['device_id'] ?? 'energy';
+        $current = isset($input['current']) ? (float) $input['current'] : 0.0;
+        $voltage = isset($input['voltage']) ? (float) $input['voltage'] : 3.97;
+        $temperature = isset($input['temperature']) ? (float) $input['temperature'] : (isset($input['temp']) ? (float)$input['temp'] : 32.8);
+        $kwh = isset($input['kwh']) ? (float) $input['kwh'] : 0.02;
+        $power = isset($input['power']) ? (float) $input['power'] : 0.0;
+        $powerWatt = $current * $voltage;
+
+        $insertData = [
+            'device_id' => $deviceId,
+            'current' => $current,
+            'voltage' => $voltage,
+            'temperature' => $temperature,
+            'power_watt' => $powerWatt,
+            'energy' => $input['energy'] ?? null,
+            'kwh' => $kwh,
+            'power' => $power,
+            'recorded_at' => $input['recorded_at'] ?? date('Y-m-d H:i:s'),
+        ];
+
+        try {
+            $id = $this->sensorReadingModel->insert($insertData);
+            if ($id) return $this->successResponse(['inserted_id' => $id]);
+            return $this->errorResponse('Insert failed', 500);
+        } catch (\Exception $e) {
+            return $this->errorResponse('Insert error: ' . $e->getMessage(), 500);
+        }
     }
 }

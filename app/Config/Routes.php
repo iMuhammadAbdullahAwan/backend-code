@@ -7,7 +7,7 @@ use CodeIgniter\Router\RouteCollection;
  */
 $routes->get('/', 'Home::index');
 
-$routes->group('api', ['namespace' => 'App\Controllers\Api'], function($routes) {
+$routes->group('api', ['namespace' => 'App\Controllers\Api'], function ($routes) {
 
     // Devices
     $routes->get('devices',                      'DeviceController::getAllDevices');
@@ -19,6 +19,8 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api'], function($routes) 
     $routes->get('sensors/(:segment)/latest',    'SensorController::getLatest/$1');
     $routes->get('sensors/(:segment)/history',   'SensorController::getHistory/$1');
     $routes->get('sensors/(:segment)/stats',     'SensorController::getStats/$1');
+    // Test insert (debug only)
+    $routes->post('sensors/test-insert',         'SensorController::insertTestReading');
 
     // Bills
     $routes->get('bills/all',                    'BillController::getAllBills');
