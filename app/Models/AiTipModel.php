@@ -11,5 +11,5 @@ class AiTipModel extends Model
     protected $useAutoIncrement = true;
     protected $returnType = 'array';
     protected $useTimestamps = true;
-    protected $allowedFields = ['device_id', 'tip_text', 'category', 'generated_at'];
+    protected $allowedFields = ['device_id', 'tip_text', 'category', 'generated_at', 'created_at', 'updated_at'];
 }

@@ -24,12 +24,12 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api'], function ($routes)
 
     // Bills
     $routes->get('bills/all',                    'BillController::getAllBills');
-    $routes->get('bills/(:segment)/predict',     'BillController::predictBill/$1');
+    $routes->post('bills/(:segment)/predict',    'BillController::predictBill/$1');
     $routes->get('bills/(:segment)/history',     'BillController::getBillHistory/$1');
 
     // AI Tips
     $routes->get('tips/all',                     'TipsController::getAllLatestTips');
-    $routes->get('tips/(:segment)',              'TipsController::getTips/$1');
+    $routes->post('tips/(:segment)/generate',    'TipsController::generateTips/$1');
     $routes->get('tips/(:segment)/history',      'TipsController::getTipsHistory/$1');
 
     // Firebase Sync (internal — protect with IP whitelist or secret key)

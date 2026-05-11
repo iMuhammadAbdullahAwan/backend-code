@@ -28,7 +28,7 @@ class BillController extends BaseApiController
 
         if (!$readings) return $this->errorResponse('No sensor data found', 404);
 
-        $simpleData = array_map(function($r) {
+        $simpleData = array_map(function ($r) {
             return [
                 'current' => $r['current'],
                 'voltage' => $r['voltage'],
@@ -47,7 +47,17 @@ class BillController extends BaseApiController
             'currency' => $prediction['currency'] ?? 'USD',
             'generated_at' => date('Y-m-d H:i:s'),
         ];
-        $this->billPredictionModel->insert($data);
+        try {
+            $id = $this->billPredictionModel->insert($data);
+            if ($id) {
+                log_message('info', 'Bill prediction inserted id=' . $id . ' device=' . $deviceId);
+                $data['id'] = $id;
+            } else {
+                log_message('error', 'Bill prediction insert failed for device=' . $deviceId . ' data=' . json_encode($data));
+            }
+        } catch (\Exception $e) {
+            log_message('error', 'Bill prediction insert exception for device=' . $deviceId . ' error=' . $e->getMessage());
+        }
 
         return $this->successResponse(array_merge($data, ['summary' => $prediction['summary'] ?? '']));
     }
