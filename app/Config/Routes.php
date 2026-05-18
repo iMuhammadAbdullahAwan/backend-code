@@ -13,6 +13,7 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api'], function ($routes)
     $routes->get('devices',                      'DeviceController::getAllDevices');
     $routes->get('devices/(:segment)',           'DeviceController::getDevice/$1');
     $routes->get('devices/(:segment)/status',    'DeviceController::getDeviceStatus/$1');
+    $routes->get('devices/(:segment)/export',    'DeviceController::exportData/$1');
 
     // Sensors
     $routes->get('sensors/latest',               'SensorController::getLatestAll');

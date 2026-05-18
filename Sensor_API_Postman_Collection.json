@@ -63,6 +63,54 @@
         "description": "Get the latest sensor data for a specific device"
       },
       "response": []
+    },
+    {
+      "name": "Export Device Data (CSV / PDF)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"consumption\",\n  \"format\": \"csv\",\n  \"start_date\": \"2026-05-01\",\n  \"end_date\": \"2026-05-31\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8080/api/devices/sensor_01/export?type=consumption&format=csv&start_date=2026-05-01&end_date=2026-05-31",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "devices", "sensor_01", "export"],
+          "query": [
+            {
+              "key": "type",
+              "value": "consumption",
+              "description": "Valid values: consumption, billing, alerts"
+            },
+            {
+              "key": "format",
+              "value": "csv",
+              "description": "Valid values: csv, pdf"
+            },
+            {
+              "key": "start_date",
+              "value": "2026-05-01",
+              "description": "Optional start date filter YYYY-MM-DD"
+            },
+            {
+              "key": "end_date",
+              "value": "2026-05-31",
+              "description": "Optional end date filter YYYY-MM-DD"
+            }
+          ]
+        },
+        "description": "Export energy consumption, billing predictions, or AI alerts data as CSV or PDF files"
+      },
+      "response": []
     }
   ],
   "variable": [

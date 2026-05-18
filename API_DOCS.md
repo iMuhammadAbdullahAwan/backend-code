@@ -116,6 +116,30 @@ Retrieve the latest status and sensor reading for a specific device.
 }
 ```
 
+### `GET /devices/{device_id}/export`
+Export energy consumption, billing predictions, or AI alerts data as CSV or PDF files.
+
+**Parameters (can be passed via Query String OR JSON Request Body):**
+*   `type` (required): The type of report to generate. Valid values: `consumption`, `billing`, `alerts`.
+*   `format` (required): The file format to return. Valid values: `csv`, `pdf`.
+*   `start_date` (optional): Filter data from this date (format: `YYYY-MM-DD`).
+*   `end_date` (optional): Filter data up to this date (format: `YYYY-MM-DD`).
+
+**Response for `format=csv`:**
+Returns raw binary stream downloading as `smart_energy_report.csv` with `Content-Type: text/csv`.
+
+**Response for `format=pdf`:**
+Returns raw binary stream downloading as `smart_energy_invoice.pdf` or report with `Content-Type: application/pdf`.
+
+**Error Response Example (404 Not Found or 400 Bad Request):**
+```json
+{
+  "status": "error",
+  "message": "No data found for this device or date range.",
+  "code": 404
+}
+```
+
 ---
 
 ## 2. Sensors
