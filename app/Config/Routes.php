@@ -27,6 +27,8 @@ $routes->group('api', ['namespace' => 'App\Controllers\Api'], function ($routes)
     $routes->get('bills/all',                    'BillController::getAllBills');
     $routes->post('bills/(:segment)/predict',    'BillController::predictBill/$1');
     $routes->get('bills/(:segment)/history',     'BillController::getBillHistory/$1');
+    $routes->get('bills/(:segment)/config',      'BillController::getConfig/$1');
+    $routes->get('bills/(:segment)/mtd',         'BillController::getMtd/$1');
 
     // AI Tips
     $routes->get('tips/all',                     'TipsController::getAllLatestTips');

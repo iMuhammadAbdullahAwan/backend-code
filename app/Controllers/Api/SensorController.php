@@ -58,28 +58,181 @@ class SensorController extends BaseApiController
     public function getStats($deviceId)
     {
         $period = $this->request->getGet('period') ?: 'daily';
+        if (!in_array($period, ['daily', 'weekly', 'monthly'], true)) {
+            return $this->errorResponse('Invalid period. Use daily, weekly or monthly.', 400);
+        }
 
-        $readings = $this->sensorReadingModel->where('device_id', $deviceId)->findAll();
-        if (!$readings) return $this->errorResponse('No readings found', 404);
+        $buckets = match ($period) {
+            'daily'   => $this->dailyBuckets(),
+            'weekly'  => $this->weeklyBuckets(),
+            'monthly' => $this->monthlyBuckets(),
+        };
 
-        $currents = array_column($readings, 'current');
-        $voltages = array_column($readings, 'voltage');
-        $temps = array_column($readings, 'temperature');
-        $powers = array_column($readings, 'power_watt');
+        $rows = $this->aggregateRows($deviceId, $period);
 
-        $stats = [
-            'period' => $period,
-            'count' => count($readings),
-            'avg_current' => count($currents) > 0 ? array_sum($currents) / count($currents) : 0,
-            'max_current' => count($currents) > 0 ? max($currents) : 0,
-            'min_current' => count($currents) > 0 ? min($currents) : 0,
-            'avg_voltage' => count($voltages) > 0 ? array_sum($voltages) / count($voltages) : 0,
-            'avg_temperature' => count($temps) > 0 ? array_sum($temps) / count($temps) : 0,
-            'avg_power' => count($powers) > 0 ? array_sum($powers) / count($powers) : 0,
-            'max_power' => count($powers) > 0 ? max($powers) : 0,
+        $series = [];
+        $totalKwh = 0.0;
+        $activeVoltages = [];
+        $activeCurrents = [];
+        $activeTemps = [];
+
+        foreach ($buckets as $bucket) {
+            $row = $rows[$bucket['key']] ?? null;
+
+            $kwh = $row ? round((float) $row['kwh'], 2) : 0.00;
+            $voltage = $row ? round((float) $row['voltage'], 2) : 0.00;
+            $current = $row ? round((float) $row['current'], 2) : 0.00;
+            $temperature = $row ? round((float) $row['temperature'], 2) : 0.00;
+
+            $series[] = [
+                'label'       => $bucket['label'],
+                'date'        => $bucket['date'],
+                'kwh'         => $kwh,
+                'voltage'     => $voltage,
+                'current'     => $current,
+                'temperature' => $temperature,
+            ];
+
+            $totalKwh += $kwh;
+            if ($row !== null) {
+                $activeVoltages[] = $voltage;
+                $activeCurrents[] = $current;
+                $activeTemps[] = $temperature;
+            }
+        }
+
+        $intervalCount = count($series);
+
+        $averages = [
+            'avg_kwh'         => $intervalCount > 0 ? round($totalKwh / $intervalCount, 2) : 0.00,
+            'avg_voltage'     => count($activeVoltages) > 0 ? round(array_sum($activeVoltages) / count($activeVoltages), 2) : 0.00,
+            'avg_current'     => count($activeCurrents) > 0 ? round(array_sum($activeCurrents) / count($activeCurrents), 2) : 0.00,
+            'avg_temperature' => count($activeTemps) > 0 ? round(array_sum($activeTemps) / count($activeTemps), 2) : 0.00,
+            'total_kwh'       => round($totalKwh, 2),
         ];
 
-        return $this->successResponse($stats);
+        return $this->successResponse([
+            'period'    => $period,
+            'averages'  => $averages,
+            'series'    => $series,
+        ]);
+    }
+
+    /**
+     * Runs the grouped SQL aggregation for the given period and returns rows
+     * keyed by the same bucket key produced by {daily,weekly,monthly}Buckets().
+     */
+    private function aggregateRows(string $deviceId, string $period): array
+    {
+        $db = \Config\Database::connect();
+
+        if ($period === 'daily') {
+            [$start, $end] = $this->currentWeekBounds();
+            $query = $db->query(
+                "SELECT DATE(recorded_at) AS bucket_key,
+                        SUM(kwh) AS kwh, AVG(voltage) AS voltage,
+                        AVG(current) AS current, AVG(temperature) AS temperature
+                 FROM sensor_readings
+                 WHERE device_id = ? AND recorded_at >= ? AND recorded_at <= ?
+                 GROUP BY DATE(recorded_at)",
+                [$deviceId, $start, $end]
+            );
+        } elseif ($period === 'weekly') {
+            $year = date('Y');
+            $month = date('n');
+            $query = $db->query(
+                "SELECT FLOOR((DAY(recorded_at) - 1) / 7) + 1 AS bucket_key,
+                        SUM(kwh) AS kwh, AVG(voltage) AS voltage,
+                        AVG(current) AS current, AVG(temperature) AS temperature
+                 FROM sensor_readings
+                 WHERE device_id = ? AND YEAR(recorded_at) = ? AND MONTH(recorded_at) = ?
+                 GROUP BY bucket_key",
+                [$deviceId, $year, $month]
+            );
+        } else {
+            $year = date('Y');
+            $query = $db->query(
+                "SELECT MONTH(recorded_at) AS bucket_key,
+                        SUM(kwh) AS kwh, AVG(voltage) AS voltage,
+                        AVG(current) AS current, AVG(temperature) AS temperature
+                 FROM sensor_readings
+                 WHERE device_id = ? AND YEAR(recorded_at) = ?
+                 GROUP BY bucket_key",
+                [$deviceId, $year]
+            );
+        }
+
+        $rows = [];
+        foreach ($query->getResultArray() as $row) {
+            $rows[(string) $row['bucket_key']] = $row;
+        }
+
+        return $rows;
+    }
+
+    private function currentWeekBounds(): array
+    {
+        $today = new \DateTime();
+        $dayOfWeek = (int) $today->format('N'); // 1 (Mon) .. 7 (Sun)
+        $monday = (clone $today)->modify('-' . ($dayOfWeek - 1) . ' days')->setTime(0, 0, 0);
+        $sunday = (clone $monday)->modify('+6 days')->setTime(23, 59, 59);
+
+        return [$monday->format('Y-m-d H:i:s'), $sunday->format('Y-m-d H:i:s')];
+    }
+
+    private function dailyBuckets(): array
+    {
+        $today = new \DateTime();
+        $dayOfWeek = (int) $today->format('N');
+        $monday = (clone $today)->modify('-' . ($dayOfWeek - 1) . ' days');
+
+        $buckets = [];
+        for ($i = 0; $i < 7; $i++) {
+            $date = (clone $monday)->modify("+{$i} days");
+            $buckets[] = [
+                'key'   => $date->format('Y-m-d'),
+                'label' => $date->format('D'),
+                'date'  => $date->format('Y-m-d'),
+            ];
+        }
+
+        return $buckets;
+    }
+
+    private function weeklyBuckets(): array
+    {
+        $year = (int) date('Y');
+        $month = (int) date('n');
+        $daysInMonth = (int) date('t');
+        $weekCount = (int) ceil($daysInMonth / 7);
+
+        $buckets = [];
+        for ($week = 1; $week <= $weekCount; $week++) {
+            $startDay = ($week - 1) * 7 + 1;
+            $buckets[] = [
+                'key'   => (string) $week,
+                'label' => "Week {$week}",
+                'date'  => sprintf('%04d-%02d-%02d', $year, $month, $startDay),
+            ];
+        }
+
+        return $buckets;
+    }
+
+    private function monthlyBuckets(): array
+    {
+        $year = (int) date('Y');
+
+        $buckets = [];
+        for ($month = 1; $month <= 12; $month++) {
+            $buckets[] = [
+                'key'   => (string) $month,
+                'label' => date('M', mktime(0, 0, 0, $month, 1, $year)),
+                'date'  => sprintf('%04d-%02d-01', $year, $month),
+            ];
+        }
+
+        return $buckets;
     }
 
     /**
