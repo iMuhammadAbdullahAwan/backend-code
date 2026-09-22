@@ -129,17 +129,65 @@ class FirebaseSync extends BaseController
         $energy = isset($data['energy']) ? (float) $data['energy'] : null;
         $kwh = isset($data['kwh']) ? (float) $data['kwh'] : null;
         $powerRaw = isset($data['power']) ? (float) $data['power'] : null;
+        $temperature = $data['temp'] ?? $data['temperature'] ?? 0;
+
+        // Does the hardware payload have an explicit freshness signal?
+        $hardwareTimestamp = $data['recorded_at'] ?? $data['timestamp'] ?? $data['time'] ?? null;
+
+        $latestReading = $this->sensorReadingModel
+            ->where('device_id', $deviceId)
+            ->orderBy('id', 'DESC')
+            ->first();
+
+        if ($latestReading) {
+            if ($hardwareTimestamp !== null) {
+                // Hardware provided a timestamp. Convert numeric epoch to DB datetime.
+                $incomingTime = is_numeric($hardwareTimestamp) ? date('Y-m-d H:i:s', $hardwareTimestamp) : $hardwareTimestamp;
+                if ($latestReading['recorded_at'] === $incomingTime) {
+                    log_message('info', "Skipping stale Firebase reading (timestamp unchanged) for {$deviceId}");
+                    return;
+                }
+            } else {
+                // No hardware signal available. Deduplicate by comparing the complete payload.
+                // (Decimals are retrieved as strings from DB, so we cast to float for comparison)
+                $isDuplicate = (
+                    (float)($latestReading['current'] ?? 0) === $current &&
+                    (float)($latestReading['voltage'] ?? 0) === $voltage &&
+                    (float)($latestReading['temperature'] ?? 0) === (float)$temperature &&
+                    (float)($latestReading['power_watt'] ?? 0) === $powerWatt
+                );
+
+                if ($isDuplicate && isset($data['energy'])) {
+                    $isDuplicate = (float)($latestReading['energy'] ?? 0) === $energy;
+                }
+                if ($isDuplicate && isset($data['kwh'])) {
+                    $isDuplicate = (float)($latestReading['kwh'] ?? 0) === $kwh;
+                }
+                if ($isDuplicate && isset($data['power'])) {
+                    $isDuplicate = (float)($latestReading['power'] ?? 0) === $powerRaw;
+                }
+
+                if ($isDuplicate) {
+                    log_message('info', "Skipping stale Firebase reading (completely identical payload) for {$deviceId}");
+                    return;
+                }
+            }
+        }
+
+        $recordedAt = $hardwareTimestamp !== null
+            ? (is_numeric($hardwareTimestamp) ? date('Y-m-d H:i:s', $hardwareTimestamp) : $hardwareTimestamp)
+            : date('Y-m-d H:i:s');
 
         $insertData = [
             'device_id'   => $deviceId,
             'current'     => $current,
             'voltage'     => $voltage,
-            'temperature' => $data['temp'] ?? $data['temperature'] ?? 0,
+            'temperature' => $temperature,
             'power_watt'  => $powerWatt,
             'energy'      => $energy,
             'kwh'         => $kwh,
             'power'       => $powerRaw,
-            'recorded_at' => $data['recorded_at'] ?? date('Y-m-d H:i:s'),
+            'recorded_at' => $recordedAt,
         ];
 
         $result = $this->sensorReadingModel->insert($insertData);
