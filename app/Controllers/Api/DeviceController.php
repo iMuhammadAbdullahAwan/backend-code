@@ -6,6 +6,7 @@ use App\Models\DeviceModel;
 use App\Models\SensorReadingModel;
 use App\Models\AiTipModel;
 use App\Models\BillPredictionModel;
+use App\Libraries\DeviceConnectionStatus;
 use Dompdf\Dompdf;
 use Dompdf\Options;
 
@@ -48,9 +49,15 @@ class DeviceController extends BaseApiController
             ->orderBy('recorded_at', 'DESC')
             ->first();
 
+        $timeout = (int) (env('DEVICE_OFFLINE_TIMEOUT') ?: 120);
+        $connection = DeviceConnectionStatus::resolve($latestReading, $timeout);
+
         $data = [
             'device' => $device,
-            'latest_reading' => $latestReading
+            'latest_reading' => $latestReading,
+            'connection_status' => $connection['connection_status'],
+            'is_online' => $connection['is_online'],
+            'last_seen' => $connection['last_seen'],
         ];
         return $this->successResponse($data);
     }

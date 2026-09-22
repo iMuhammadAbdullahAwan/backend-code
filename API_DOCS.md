@@ -85,7 +85,9 @@ Retrieve details for a specific device.
 ### `GET /devices/{device_id}/status`
 Retrieve the latest status and sensor reading for a specific device.
 
-**Response Example:**
+`latest_reading` is always the last known sensor reading for the device — it is never nulled out or zeroed just because the device has gone quiet. `connection_status` (and its boolean twin `is_online`) instead indicates whether that reading is still fresh, based on its age compared to the configured `DEVICE_OFFLINE_TIMEOUT` (default 120 seconds, see `.env`). `last_seen` is the `recorded_at` timestamp of that same latest reading (or `null` if the device has never reported one). This is independent from `device.status`, which remains the existing `active`/`inactive` device record field and is not affected by connectivity.
+
+**Response Example (fresh reading — online):**
 ```json
 {
   "status": "success",
@@ -110,7 +112,46 @@ Retrieve the latest status and sensor reading for a specific device.
       "kwh": "0.12",
       "power": "0.33",
       "recorded_at": "2026-05-12 12:00:00"
-    }
+    },
+    "connection_status": "online",
+    "is_online": true,
+    "last_seen": "2026-05-12 12:00:00"
+  },
+  "message": ""
+}
+```
+
+**Response Example (stale reading — offline; `latest_reading` is unchanged, not zeroed):**
+```json
+{
+  "status": "success",
+  "data": {
+    "device": { "...": "existing device fields" },
+    "latest_reading": {
+      "voltage": "187.3000",
+      "temperature": "28.9000",
+      "current": "0.0000",
+      "power_watt": "0.0000",
+      "recorded_at": "2026-09-21 18:14:18"
+    },
+    "connection_status": "offline",
+    "is_online": false,
+    "last_seen": "2026-09-21 18:14:18"
+  },
+  "message": ""
+}
+```
+
+**Response Example (no reading ever recorded):**
+```json
+{
+  "status": "success",
+  "data": {
+    "device": { "...": "existing device fields" },
+    "latest_reading": null,
+    "connection_status": "offline",
+    "is_online": false,
+    "last_seen": null
   },
   "message": ""
 }
