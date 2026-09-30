@@ -88,11 +88,15 @@ class GeminiService
     public function generateEnergyTips(string $deviceId, array $recentReadings): array
     {
         $readingsJson = json_encode($recentReadings);
-        $prompt = "You are an energy efficiency AI assistant. Analyze the following 
-         sensor readings for device {$deviceId} and provide 3 practical 
+        $prompt = "You are an energy efficiency AI assistant. Analyze the following
+         sensor readings for device {$deviceId} and provide 3 practical
          energy-saving tips or maintenance alerts.
          Readings: {$readingsJson}
-         
+
+         If any tip mentions a monetary amount (cost, savings, price), it MUST be in
+         Pakistani Rupees using the 'Rs.' symbol (e.g. 'Rs. 500'). Never use USD,
+         dollars, or the '\$' symbol.
+
          Return ONLY valid JSON array:
          [
            { \"tip\": \"tip text here\", \"category\": \"energy saving|maintenance|alert\" }
