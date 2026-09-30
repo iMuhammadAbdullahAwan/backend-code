@@ -193,6 +193,35 @@ final class BillingForecastServiceTest extends CIUnitTestCase
         $this->assertSame(2.0, $result['mtd_units']);
     }
 
+    public function testConsumptionBeforeMidPeriodResetIsKept(): void
+    {
+        $this->insertFlatTariff('DEV_RESET_KEEP', 10.0);
+        $this->insertReading('DEV_RESET_KEEP', '2026-08-25 08:00:00', 100.0); // baseline before period
+        $this->insertReading('DEV_RESET_KEEP', '2026-09-05 08:00:00', 150.0); // +50 consumed
+        $this->insertReading('DEV_RESET_KEEP', '2026-09-10 08:00:00', 160.0); // +10 consumed
+        $this->insertReading('DEV_RESET_KEEP', '2026-09-12 08:00:00', 0.01);  // hardware reset
+        $this->insertReading('DEV_RESET_KEEP', '2026-09-14 08:00:00', 5.01);  // +5 consumed since reset
+
+        $result = $this->service->forecast('DEV_RESET_KEEP', $this->now('2026-09-15 12:00:00'));
+
+        // (150-100) + (160-150) + 0.01 (value since reset) + (5.01-0.01) = 65.01
+        $this->assertEqualsWithDelta(65.01, $result['mtd_units'], 0.0001);
+    }
+
+    public function testMultipleResetsInOnePeriodAreAllHandled(): void
+    {
+        $this->insertFlatTariff('DEV_RESET_TWICE', 10.0);
+        $this->insertReading('DEV_RESET_TWICE', '2026-09-02 08:00:00', 10.0); // in-window baseline
+        $this->insertReading('DEV_RESET_TWICE', '2026-09-04 08:00:00', 20.0); // +10
+        $this->insertReading('DEV_RESET_TWICE', '2026-09-06 08:00:00', 1.0);  // reset, +1
+        $this->insertReading('DEV_RESET_TWICE', '2026-09-08 08:00:00', 4.0);  // +3
+        $this->insertReading('DEV_RESET_TWICE', '2026-09-10 08:00:00', 2.0);  // reset, +2
+
+        $result = $this->service->forecast('DEV_RESET_TWICE', $this->now('2026-09-15 12:00:00'));
+
+        $this->assertEqualsWithDelta(16.0, $result['mtd_units'], 0.0001);
+    }
+
     // ---- MTD billing ----
 
     public function testMtdBillFlatTariff(): void

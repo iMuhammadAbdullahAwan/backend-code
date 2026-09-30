@@ -29,28 +29,16 @@ class SensorReadingModel extends Model
      * first reading is used as the baseline (nothing is known about
      * consumption before the device started reporting).
      *
-     * A negative delta means the hardware's register was reset (e.g. power
-     * loss) partway through the window; in that case the register's value
-     * since the reset is used as-is rather than subtracting a larger prior
-     * baseline into a nonsensical negative total.
+     * The window is walked reading by reading: each step adds the increase
+     * over the previous reading. A reading LOWER than its predecessor means
+     * the hardware's register was reset (e.g. power loss) at that point; the
+     * register's value since the reset is added as-is (consumption before the
+     * reset is kept, not discarded) and counting continues from there.
+     * Comparing only the first and last reading of the window would wrongly
+     * drop everything consumed before a mid-window reset.
      */
     public function kwhDeltaBetween(string $deviceId, string $from, string $to): float
     {
-        $latest = $this->select('kwh')
-            ->where('device_id', $deviceId)
-            ->where('recorded_at >=', $from)
-            ->where('recorded_at <=', $to)
-            ->where('kwh IS NOT NULL')
-            ->orderBy('recorded_at', 'DESC')
-            ->orderBy('id', 'DESC')
-            ->first();
-
-        if (!$latest) {
-            return 0.0;
-        }
-
-        $latestKwh = (float) $latest['kwh'];
-
         $baseline = $this->select('kwh')
             ->where('device_id', $deviceId)
             ->where('recorded_at <', $from)
@@ -59,21 +47,30 @@ class SensorReadingModel extends Model
             ->orderBy('id', 'DESC')
             ->first();
 
-        if (!$baseline) {
-            $baseline = $this->select('kwh')
-                ->where('device_id', $deviceId)
-                ->where('recorded_at >=', $from)
-                ->where('recorded_at <=', $to)
-                ->where('kwh IS NOT NULL')
-                ->orderBy('recorded_at', 'ASC')
-                ->orderBy('id', 'ASC')
-                ->first();
+        $rows = $this->select('kwh')
+            ->where('device_id', $deviceId)
+            ->where('recorded_at >=', $from)
+            ->where('recorded_at <=', $to)
+            ->where('kwh IS NOT NULL')
+            ->orderBy('recorded_at', 'ASC')
+            ->orderBy('id', 'ASC')
+            ->findAll();
+
+        if (!$rows) {
+            return 0.0;
         }
 
-        $baselineKwh = $baseline ? (float) $baseline['kwh'] : $latestKwh;
+        // With no reading before the window, nothing is known about earlier
+        // consumption, so the window's own first reading is the baseline.
+        $previous = $baseline ? (float) $baseline['kwh'] : (float) $rows[0]['kwh'];
+        $total = 0.0;
 
-        $delta = $latestKwh - $baselineKwh;
+        foreach ($rows as $row) {
+            $current = (float) $row['kwh'];
+            $total += $current >= $previous ? $current - $previous : $current;
+            $previous = $current;
+        }
 
-        return $delta >= 0 ? $delta : $latestKwh;
+        return $total;
     }
 }
