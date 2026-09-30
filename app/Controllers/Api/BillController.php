@@ -100,8 +100,9 @@ class BillController extends BaseApiController
      * Deterministic month-to-date billing + end-of-cycle forecast.
      *
      * Unlike predictBill(), this endpoint never calls Gemini: mtd_units and
-     * predicted_units come from SUM(sensor_readings.kwh) over the resolved
-     * billing period, and mtd_bill/predicted_bill are both computed by
+     * predicted_units come from the delta of sensor_readings.kwh (the
+     * hardware's cumulative energy register) over the resolved billing
+     * period, and mtd_bill/predicted_bill are both computed by
      * BillingTariffModel::calculateCost() (the same, unmodified tariff
      * engine predictBill() uses) — predicted_bill is calculated from
      * predicted_units directly, never by scaling mtd_bill, so progressive

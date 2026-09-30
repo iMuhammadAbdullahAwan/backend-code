@@ -10,7 +10,7 @@ use App\Models\SensorReadingModel;
  *
  * This is pure orchestration: billing-period math lives in
  * BillingPeriodResolver, consumption aggregation lives in
- * SensorReadingModel::sumKwhBetween(), and cost calculation lives in the
+ * SensorReadingModel::kwhDeltaBetween(), and cost calculation lives in the
  * existing BillingTariffModel::calculateCost() (flat or progressive-slab).
  * None of those calculations are duplicated here.
  *
@@ -40,7 +40,7 @@ class BillingForecastService
         $tariff = $this->billingTariffModel->getTariffForDevice($deviceId);
         $period = $this->periodResolver->resolve((int) $tariff['billing_cycle_start_day'], $now);
 
-        $mtdUnits = $this->sensorReadingModel->sumKwhBetween(
+        $mtdUnits = $this->sensorReadingModel->kwhDeltaBetween(
             $deviceId,
             $period->startDateTimeString(),
             $period->nowDateTimeString()

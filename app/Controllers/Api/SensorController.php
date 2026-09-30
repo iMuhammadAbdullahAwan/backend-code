@@ -79,7 +79,11 @@ class SensorController extends BaseApiController
         foreach ($buckets as $bucket) {
             $row = $rows[$bucket['key']] ?? null;
 
-            $kwh = $row ? round((float) $row['kwh'], 2) : 0.00;
+            // kwh is the hardware's cumulative energy register, not a
+            // per-reading delta (see SensorReadingModel::kwhDeltaBetween),
+            // so each bucket's consumption is computed as a register delta
+            // rather than pulled from the AVG-only SQL aggregation below.
+            $kwh = round($this->sensorReadingModel->kwhDeltaBetween($deviceId, $bucket['start'], $bucket['end']), 2);
             $voltage = $row ? round((float) $row['voltage'], 2) : 0.00;
             $current = $row ? round((float) $row['current'], 2) : 0.00;
             $temperature = $row ? round((float) $row['temperature'], 2) : 0.00;
@@ -130,7 +134,7 @@ class SensorController extends BaseApiController
             [$start, $end] = $this->currentWeekBounds();
             $query = $db->query(
                 "SELECT DATE(recorded_at) AS bucket_key,
-                        SUM(kwh) AS kwh, AVG(voltage) AS voltage,
+                        AVG(voltage) AS voltage,
                         AVG(current) AS current, AVG(temperature) AS temperature
                  FROM sensor_readings
                  WHERE device_id = ? AND recorded_at >= ? AND recorded_at <= ?
@@ -142,7 +146,7 @@ class SensorController extends BaseApiController
             $month = date('n');
             $query = $db->query(
                 "SELECT FLOOR((DAY(recorded_at) - 1) / 7) + 1 AS bucket_key,
-                        SUM(kwh) AS kwh, AVG(voltage) AS voltage,
+                        AVG(voltage) AS voltage,
                         AVG(current) AS current, AVG(temperature) AS temperature
                  FROM sensor_readings
                  WHERE device_id = ? AND YEAR(recorded_at) = ? AND MONTH(recorded_at) = ?
@@ -153,7 +157,7 @@ class SensorController extends BaseApiController
             $year = date('Y');
             $query = $db->query(
                 "SELECT MONTH(recorded_at) AS bucket_key,
-                        SUM(kwh) AS kwh, AVG(voltage) AS voltage,
+                        AVG(voltage) AS voltage,
                         AVG(current) AS current, AVG(temperature) AS temperature
                  FROM sensor_readings
                  WHERE device_id = ? AND YEAR(recorded_at) = ?
@@ -193,6 +197,8 @@ class SensorController extends BaseApiController
                 'key'   => $date->format('Y-m-d'),
                 'label' => $date->format('D'),
                 'date'  => $date->format('Y-m-d'),
+                'start' => $date->format('Y-m-d') . ' 00:00:00',
+                'end'   => $date->format('Y-m-d') . ' 23:59:59',
             ];
         }
 
@@ -209,10 +215,13 @@ class SensorController extends BaseApiController
         $buckets = [];
         for ($week = 1; $week <= $weekCount; $week++) {
             $startDay = ($week - 1) * 7 + 1;
+            $endDay = min($startDay + 6, $daysInMonth);
             $buckets[] = [
                 'key'   => (string) $week,
                 'label' => "Week {$week}",
                 'date'  => sprintf('%04d-%02d-%02d', $year, $month, $startDay),
+                'start' => sprintf('%04d-%02d-%02d 00:00:00', $year, $month, $startDay),
+                'end'   => sprintf('%04d-%02d-%02d 23:59:59', $year, $month, $endDay),
             ];
         }
 
@@ -225,10 +234,13 @@ class SensorController extends BaseApiController
 
         $buckets = [];
         for ($month = 1; $month <= 12; $month++) {
+            $lastDay = (int) date('t', mktime(0, 0, 0, $month, 1, $year));
             $buckets[] = [
                 'key'   => (string) $month,
                 'label' => date('M', mktime(0, 0, 0, $month, 1, $year)),
                 'date'  => sprintf('%04d-%02d-01', $year, $month),
+                'start' => sprintf('%04d-%02d-01 00:00:00', $year, $month),
+                'end'   => sprintf('%04d-%02d-%02d 23:59:59', $year, $month, $lastDay),
             ];
         }
 

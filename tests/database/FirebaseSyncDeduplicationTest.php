@@ -97,6 +97,34 @@ class FirebaseSyncDeduplicationTest extends CIUnitTestCase
         $this->assertSame(2, $this->sensorReadingModel->countAllResults());
     }
 
+    public function testDeduplicatesPayloadThatOnlyDiffersBeyondStoredPrecision()
+    {
+        // Stored columns are DECIMAL(10,4); Firebase's live float carries
+        // more precision than that (ADC/sensor jitter in the 5th decimal
+        // place and beyond). Two readings that are identical once rounded
+        // to the column's precision must still be treated as duplicates,
+        // otherwise every cron tick (every minute, per CRON_SETUP.md)
+        // inserts a fresh row forever even though nothing really changed.
+        $this->invokeInsertReading('energy', [
+            'current' => 0.52,
+            'voltage' => 197.79,
+            'temp' => 26.2,
+            'kwh' => 0.06,
+        ]);
+        $this->assertSame(1, $this->sensorReadingModel->countAllResults());
+
+        // Same values, but with ADC-level jitter below the DB column's
+        // DECIMAL(10,4) precision (mirrors a real observed live payload of
+        // voltage 202.60001 vs a stored 202.6000).
+        $this->invokeInsertReading('energy', [
+            'current' => 0.52,
+            'voltage' => 197.790004,
+            'temp' => 26.199997,
+            'kwh' => 0.0600004,
+        ]);
+        $this->assertSame(1, $this->sensorReadingModel->countAllResults());
+    }
+
     public function testDeduplicatesStaleHardwareTimestamp()
     {
         // First reading

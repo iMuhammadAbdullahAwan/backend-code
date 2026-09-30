@@ -149,22 +149,28 @@ class FirebaseSync extends BaseController
                 }
             } else {
                 // No hardware signal available. Deduplicate by comparing the complete payload.
-                // (Decimals are retrieved as strings from DB, so we cast to float for comparison)
+                // Stored columns are DECIMAL(10,4), so DB values come back already
+                // rounded to 4dp while the incoming Firebase floats carry full ADC
+                // precision (e.g. 202.60001 vs a stored 202.6000). Comparing raw
+                // floats therefore never matches even when nothing really changed,
+                // so both sides are rounded to the column's precision first.
+                $sameValue = fn ($a, $b) => round((float) $a, 4) === round((float) $b, 4);
+
                 $isDuplicate = (
-                    (float)($latestReading['current'] ?? 0) === $current &&
-                    (float)($latestReading['voltage'] ?? 0) === $voltage &&
-                    (float)($latestReading['temperature'] ?? 0) === (float)$temperature &&
-                    (float)($latestReading['power_watt'] ?? 0) === $powerWatt
+                    $sameValue($latestReading['current'] ?? 0, $current) &&
+                    $sameValue($latestReading['voltage'] ?? 0, $voltage) &&
+                    $sameValue($latestReading['temperature'] ?? 0, $temperature) &&
+                    $sameValue($latestReading['power_watt'] ?? 0, $powerWatt)
                 );
 
                 if ($isDuplicate && isset($data['energy'])) {
-                    $isDuplicate = (float)($latestReading['energy'] ?? 0) === $energy;
+                    $isDuplicate = $sameValue($latestReading['energy'] ?? 0, $energy);
                 }
                 if ($isDuplicate && isset($data['kwh'])) {
-                    $isDuplicate = (float)($latestReading['kwh'] ?? 0) === $kwh;
+                    $isDuplicate = $sameValue($latestReading['kwh'] ?? 0, $kwh);
                 }
                 if ($isDuplicate && isset($data['power'])) {
-                    $isDuplicate = (float)($latestReading['power'] ?? 0) === $powerRaw;
+                    $isDuplicate = $sameValue($latestReading['power'] ?? 0, $powerRaw);
                 }
 
                 if ($isDuplicate) {

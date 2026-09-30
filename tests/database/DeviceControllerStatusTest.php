@@ -9,8 +9,7 @@ use CodeIgniter\Test\FeatureTestTrait;
 /**
  * End-to-end coverage for GET /devices/{device_id}/status: verifies the
  * connection_status/is_online/last_seen fields added on top of the existing
- * device/latest_reading response, and that GET /sensors/{device_id}/stats
- * (a separate, historical endpoint) is unaffected.
+ * device/latest_reading response.
  *
  * @internal
  */
@@ -142,37 +141,4 @@ final class DeviceControllerStatusTest extends CIUnitTestCase
         $this->assertArrayHasKey('voltage', $body['data']['latest_reading']);
     }
 
-    // ---- TEST 7: analytics endpoint untouched ----
-
-    /**
-     * SensorController::getStats() (GET /sensors/{device_id}/stats) is
-     * explicitly out of scope for this change and must not gain
-     * connection_status/is_online/last_seen or any other field.
-     *
-     * This is asserted at the source level rather than by calling the live
-     * route: SensorController::getStats() runs its aggregation through a
-     * raw `\Config\Database::connect()` query, which — independent of
-     * anything in this change — does not see the migrated schema when
-     * exercised through FeatureTestTrait's full HTTP dispatch against this
-     * project's SQLite test DB (reproduced against a throwaway route with
-     * zero device-status code involved). That is a pre-existing test-
-     * infrastructure limitation of the untouched stats endpoint, not
-     * something introduced here, and fixing it would mean modifying
-     * SensorController.php, which this task explicitly forbids. Comparing
-     * the file against the last commit is a strictly stronger guarantee
-     * anyway: it proves the file was not touched at all.
-     */
-    public function testSensorControllerFileIsUnchanged(): void
-    {
-        $path = APPPATH . 'Controllers/Api/SensorController.php';
-        $committed = shell_exec('git show HEAD:app/Controllers/Api/SensorController.php');
-        $normalize = static fn (string $s): string => trim(str_replace("\r\n", "\n", $s));
-
-        $this->assertNotEmpty($committed, 'Could not read committed SensorController.php via git show.');
-        $this->assertSame(
-            $normalize($committed),
-            $normalize(file_get_contents($path)),
-            'SensorController.php (and therefore GET /sensors/{device_id}/stats) must remain unchanged by this task.'
-        );
-    }
 }

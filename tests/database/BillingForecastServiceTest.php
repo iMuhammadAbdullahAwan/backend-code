@@ -74,7 +74,11 @@ final class BillingForecastServiceTest extends CIUnitTestCase
         ]);
     }
 
-    // ---- Consumption aggregation (SensorReadingModel::sumKwhBetween) ----
+    // ---- Consumption aggregation (SensorReadingModel::kwhDeltaBetween) ----
+    //
+    // `kwh` is the hardware's cumulative energy register, not a per-reading
+    // delta, so consumption for a period is (last register value in the
+    // period) - (last known register value before the period started).
 
     public function testNoReadingsGivesZeroUnits(): void
     {
@@ -93,10 +97,12 @@ final class BillingForecastServiceTest extends CIUnitTestCase
 
         $result = $this->service->forecast('DEV_ONE', $this->now('2026-09-15 12:00:00'));
 
-        $this->assertSame(5.0, $result['mtd_units']);
+        // No baseline before the period, so the window's own first reading
+        // (5.0) is the baseline and it's also the latest reading: delta = 0.
+        $this->assertSame(0.0, $result['mtd_units']);
     }
 
-    public function testMultipleReadingsSumTogether(): void
+    public function testMultipleReadingsUseLastMinusFirstAsDelta(): void
     {
         $this->insertFlatTariff('DEV_MULTI', 10.0);
         $this->insertReading('DEV_MULTI', '2026-09-01 08:00:00', 2.5);
@@ -105,10 +111,12 @@ final class BillingForecastServiceTest extends CIUnitTestCase
 
         $result = $this->service->forecast('DEV_MULTI', $this->now('2026-09-15 12:00:00'));
 
-        $this->assertSame(10.0, $result['mtd_units']);
+        // No prior baseline -> first-in-window (2.5) is the baseline.
+        // Consumption = last (4.0) - baseline (2.5) = 1.5.
+        $this->assertEqualsWithDelta(1.5, $result['mtd_units'], 0.0001);
     }
 
-    public function testDecimalKwhIsPreserved(): void
+    public function testDecimalKwhDeltaIsPreserved(): void
     {
         $this->insertFlatTariff('DEV_DEC', 10.0);
         $this->insertReading('DEV_DEC', '2026-09-05 08:00:00', 1.2345);
@@ -116,10 +124,10 @@ final class BillingForecastServiceTest extends CIUnitTestCase
 
         $result = $this->service->forecast('DEV_DEC', $this->now('2026-09-15 12:00:00'));
 
-        $this->assertEqualsWithDelta(3.5678, $result['mtd_units'], 0.0005);
+        $this->assertEqualsWithDelta(1.0988, $result['mtd_units'], 0.0005);
     }
 
-    public function testMultipleReadingsOnSameDayAreSummed(): void
+    public function testOnlyLastReadingOfDayCountsTowardDelta(): void
     {
         $this->insertFlatTariff('DEV_SAMEDAY', 10.0);
         $this->insertReading('DEV_SAMEDAY', '2026-09-05 08:00:00', 1.0);
@@ -128,10 +136,11 @@ final class BillingForecastServiceTest extends CIUnitTestCase
 
         $result = $this->service->forecast('DEV_SAMEDAY', $this->now('2026-09-15 12:00:00'));
 
-        $this->assertSame(4.5, $result['mtd_units']);
+        // Baseline = first-in-window (1.0), latest = 2.0 -> delta = 1.0.
+        $this->assertEqualsWithDelta(1.0, $result['mtd_units'], 0.0001);
     }
 
-    public function testNullKwhIsExcludedFromSum(): void
+    public function testNullKwhReadingsAreIgnoredWhenPickingLatestAndBaseline(): void
     {
         $this->insertFlatTariff('DEV_NULL', 10.0);
         $this->insertReading('DEV_NULL', '2026-09-05 08:00:00', 5.0);
@@ -139,17 +148,21 @@ final class BillingForecastServiceTest extends CIUnitTestCase
 
         $result = $this->service->forecast('DEV_NULL', $this->now('2026-09-15 12:00:00'));
 
-        $this->assertSame(5.0, $result['mtd_units']);
+        // The NULL reading is skipped; only reading with kwh is 5.0, which
+        // becomes both baseline and latest -> delta = 0.
+        $this->assertSame(0.0, $result['mtd_units']);
     }
 
-    public function testReadingsOutsideBillingPeriodAreExcluded(): void
+    public function testBaselineIsTakenFromBeforeThePeriodStarts(): void
     {
         $this->insertFlatTariff('DEV_OUT', 10.0);
-        $this->insertReading('DEV_OUT', '2026-08-25 08:00:00', 100.0); // previous cycle
-        $this->insertReading('DEV_OUT', '2026-09-05 08:00:00', 5.0);   // current cycle
+        $this->insertReading('DEV_OUT', '2026-08-25 08:00:00', 100.0); // previous cycle (baseline)
+        $this->insertReading('DEV_OUT', '2026-09-05 08:00:00', 105.0); // current cycle
 
         $result = $this->service->forecast('DEV_OUT', $this->now('2026-09-15 12:00:00'));
 
+        // Baseline = last reading before period start (100.0), latest in
+        // period = 105.0 -> delta = 5.0.
         $this->assertSame(5.0, $result['mtd_units']);
     }
 
@@ -157,12 +170,27 @@ final class BillingForecastServiceTest extends CIUnitTestCase
     {
         $this->insertFlatTariff('DEV_A', 10.0);
         $this->insertFlatTariff('DEV_B', 10.0);
+        $this->insertReading('DEV_A', '2026-09-01 00:00:00', 40.0);
         $this->insertReading('DEV_A', '2026-09-05 08:00:00', 50.0);
+        $this->insertReading('DEV_B', '2026-09-01 00:00:00', 900.0);
         $this->insertReading('DEV_B', '2026-09-05 08:00:00', 999.0);
 
         $result = $this->service->forecast('DEV_A', $this->now('2026-09-15 12:00:00'));
 
-        $this->assertSame(50.0, $result['mtd_units']);
+        $this->assertSame(10.0, $result['mtd_units']);
+    }
+
+    public function testRegisterResetMidPeriodUsesLatestValueAsIs(): void
+    {
+        $this->insertFlatTariff('DEV_RESET', 10.0);
+        $this->insertReading('DEV_RESET', '2026-08-25 08:00:00', 500.0); // baseline before period
+        $this->insertReading('DEV_RESET', '2026-09-05 08:00:00', 2.0);  // hardware reset, register restarted
+
+        $result = $this->service->forecast('DEV_RESET', $this->now('2026-09-15 12:00:00'));
+
+        // delta would be 2.0 - 500.0 = -498.0 (nonsensical); the reset case
+        // falls back to the latest register value itself.
+        $this->assertSame(2.0, $result['mtd_units']);
     }
 
     // ---- MTD billing ----
@@ -170,6 +198,7 @@ final class BillingForecastServiceTest extends CIUnitTestCase
     public function testMtdBillFlatTariff(): void
     {
         $this->insertFlatTariff('DEV_FLAT', 32.5);
+        $this->insertReading('DEV_FLAT', '2026-09-01 00:00:00', 0.0);
         $this->insertReading('DEV_FLAT', '2026-09-05 08:00:00', 180.0);
 
         $result = $this->service->forecast('DEV_FLAT', $this->now('2026-09-15 12:00:00'));
@@ -196,6 +225,7 @@ final class BillingForecastServiceTest extends CIUnitTestCase
             ['min_kwh' => 101, 'max_kwh' => 300, 'rate' => 32.5],
             ['min_kwh' => 301, 'max_kwh' => null, 'rate' => 45.0],
         ]);
+        $this->insertReading('DEV_SLAB', '2026-09-01 00:00:00', 0.0);
         $this->insertReading('DEV_SLAB', '2026-09-05 08:00:00', 180.0);
 
         $result = $this->service->forecast('DEV_SLAB', $this->now('2026-09-15 12:00:00'));
@@ -209,6 +239,7 @@ final class BillingForecastServiceTest extends CIUnitTestCase
     public function testAvgDailyConsumptionAndForecastAtDayFifteen(): void
     {
         $this->insertFlatTariff('DEV_FORECAST', 32.5, 1);
+        $this->insertReading('DEV_FORECAST', '2026-09-01 00:00:00', 0.0);
         $this->insertReading('DEV_FORECAST', '2026-09-03 08:00:00', 180.0);
 
         $result = $this->service->forecast('DEV_FORECAST', $this->now('2026-09-15 12:00:00'));
@@ -223,6 +254,7 @@ final class BillingForecastServiceTest extends CIUnitTestCase
     public function testForecastOnFirstDayOfCycle(): void
     {
         $this->insertFlatTariff('DEV_DAY1', 10.0, 1);
+        $this->insertReading('DEV_DAY1', '2026-08-31 23:00:00', 0.0);
         $this->insertReading('DEV_DAY1', '2026-09-01 06:00:00', 6.0);
 
         $result = $this->service->forecast('DEV_DAY1', $this->now('2026-09-01 12:00:00'));
@@ -235,6 +267,7 @@ final class BillingForecastServiceTest extends CIUnitTestCase
     public function testForecastOnLastDayOfCycleEqualsMtd(): void
     {
         $this->insertFlatTariff('DEV_LASTDAY', 10.0, 1);
+        $this->insertReading('DEV_LASTDAY', '2026-09-01 00:00:00', 0.0);
         $this->insertReading('DEV_LASTDAY', '2026-09-10 06:00:00', 300.0);
 
         $result = $this->service->forecast('DEV_LASTDAY', $this->now('2026-09-30 23:00:00'));
@@ -259,6 +292,7 @@ final class BillingForecastServiceTest extends CIUnitTestCase
     public function testForecastFlatTariffBillIsRateTimesPredictedUnits(): void
     {
         $this->insertFlatTariff('DEV_FLATFC', 32.5, 1);
+        $this->insertReading('DEV_FLATFC', '2026-09-01 00:00:00', 0.0);
         $this->insertReading('DEV_FLATFC', '2026-09-03 08:00:00', 180.0);
 
         $result = $this->service->forecast('DEV_FLATFC', $this->now('2026-09-15 12:00:00'));
@@ -280,7 +314,8 @@ final class BillingForecastServiceTest extends CIUnitTestCase
             ['min_kwh' => 101, 'max_kwh' => 300, 'rate' => 32.5],
             ['min_kwh' => 301, 'max_kwh' => null, 'rate' => 45.0],
         ], 1);
-        // 180 units by day 15 of a 30-day cycle -> predicted 360 units.
+        // 0 -> 180 units by day 15 of a 30-day cycle -> predicted 360 units.
+        $this->insertReading('DEV_SLABFC', '2026-09-01 00:00:00', 0.0);
         $this->insertReading('DEV_SLABFC', '2026-09-03 08:00:00', 180.0);
 
         $result = $this->service->forecast('DEV_SLABFC', $this->now('2026-09-15 12:00:00'));
@@ -316,6 +351,7 @@ final class BillingForecastServiceTest extends CIUnitTestCase
             ['min_kwh' => 101, 'max_kwh' => 300, 'rate' => 32.5],
             ['min_kwh' => 301, 'max_kwh' => null, 'rate' => 45.0],
         ], 1);
+        $this->insertReading('DEV_SLABREG', '2026-09-01 00:00:00', 0.0);
         $this->insertReading('DEV_SLABREG', '2026-09-05 08:00:00', 300.0);
 
         // Day 25 of a 30-day cycle: elapsed=25, remaining=5.
@@ -334,6 +370,7 @@ final class BillingForecastServiceTest extends CIUnitTestCase
     public function testRemainingEstimatedBillIsDifferenceAndNotNegative(): void
     {
         $this->insertFlatTariff('DEV_REMAIN', 32.5, 1);
+        $this->insertReading('DEV_REMAIN', '2026-09-01 00:00:00', 0.0);
         $this->insertReading('DEV_REMAIN', '2026-09-03 08:00:00', 180.0);
 
         $result = $this->service->forecast('DEV_REMAIN', $this->now('2026-09-15 12:00:00'));
@@ -353,6 +390,7 @@ final class BillingForecastServiceTest extends CIUnitTestCase
         $globalTariff = $this->billingTariffModel->where('device_id', null)->first();
         $this->billingTariffModel->update($globalTariff['id'], ['rate_per_kwh' => 15.0]);
 
+        $this->insertReading('DEV_NOTARIFF', '2026-09-01 00:00:00', 0.0);
         $this->insertReading('DEV_NOTARIFF', '2026-09-05 08:00:00', 10.0);
 
         $result = $this->service->forecast('DEV_NOTARIFF', $this->now('2026-09-15 12:00:00'));
